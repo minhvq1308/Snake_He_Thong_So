@@ -1,6 +1,19 @@
-CC = gcc
+CC = riscv64-unknown-elf-gcc
+OBJCOPY = riscv64-unknown-elf-objcopy
 
-CFLAGS = -Wall -Wextra -std=c11 -Iinc
+CFLAGS = -Wall -Wextra -std=c11 -Iinc \
+         -march=rv32im \
+         -mabi=ilp32 \
+         -ffreestanding \
+         -O0
+
+ASFLAGS = -march=rv32im \
+          -mabi=ilp32
+
+LDFLAGS = -nostdlib \
+          -nostartfiles \
+          -nodefaultlibs \
+          -T linker.ld
 
 SRC = src/main.c \
       src/snake.c \
@@ -9,22 +22,22 @@ SRC = src/main.c \
       src/input.c \
       src/display.c
 
-TARGET = build/snake
+ASM = start.S
 
-all: $(TARGET)
+ELF = build/snake.elf
+BIN = build/snake.bin
 
-$(TARGET): $(SRC)
+all: $(BIN)
+
+$(ELF): $(SRC) $(ASM) linker.ld
 	mkdir -p build
-	$(CC) $(CFLAGS) $(SRC) -o $(TARGET)
+	$(CC) $(CFLAGS) $(ASFLAGS) $(LDFLAGS) \
+	$(ASM) $(SRC) -o $(ELF)
 
-run: $(TARGET)
-	./$(TARGET)
-
-debug:
-	mkdir -p build
-	$(CC) $(CFLAGS) -g $(SRC) -o $(TARGET)
+$(BIN): $(ELF)
+	$(OBJCOPY) -O binary $(ELF) $(BIN)
 
 clean:
 	rm -rf build
 
-.PHONY: all run debug clean
+.PHONY: all clean

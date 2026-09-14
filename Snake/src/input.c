@@ -1,71 +1,48 @@
-#define _DEFAULT_SOURCE
-
 #include "input.h"
 
-#include <stdio.h>
-#include <termios.h>
-#include <unistd.h>
-#include <fcntl.h>
+/*
+ * UART của SoC RISC-V
+ *
+ * Địa chỉ này chỉ là địa chỉ tạm thời.
+ * Sau khi thiết kế Verilog SoC, địa chỉ UART
+ * phải trùng với địa chỉ được khai báo trong SoC.
+ */
+#define UART_BASE   0x10000008
 
-static struct termios old_terminal;
+#define UART_RX     (*(volatile unsigned int *)(UART_BASE + 0))
+#define UART_STATUS (*(volatile unsigned int *)(UART_BASE + 4))
 
 void input_init(void)
 {
-    struct termios new_terminal;
-
-    tcgetattr(STDIN_FILENO, &old_terminal);
-
-    new_terminal = old_terminal;
-
-    new_terminal.c_lflag &=
-        ~(ICANON | ECHO);
-
-    tcsetattr(
-        STDIN_FILENO,
-        TCSANOW,
-        &new_terminal
-    );
-
-    int flags = fcntl(
-        STDIN_FILENO,
-        F_GETFL,
-        0
-    );
-
-    fcntl(
-        STDIN_FILENO,
-        F_SETFL,
-        flags | O_NONBLOCK
-    );
+    /*
+     * UART được phần cứng SoC khởi tạo.
+     * Không cần cấu hình terminal như trên Linux.
+     */
 }
 
 void input_shutdown(void)
 {
-    tcsetattr(
-        STDIN_FILENO,
-        TCSANOW,
-        &old_terminal
-    );
+    /*
+     * Không cần khôi phục terminal.
+     */
 }
 
 char input_get(void)
 {
-    char c;
-
-    if (read(
-            STDIN_FILENO,
-            &c,
-            1) == 1)
+    /*
+     * Kiểm tra UART có dữ liệu hay chưa.
+     *
+     * Bit 0 = 1: có dữ liệu nhận được.
+     */
+    if (UART_STATUS & 1)
     {
-        return c;
+        return (char)UART_RX;
     }
 
     return '\0';
 }
 
-Direction input_to_direction(
-    char input
-)
+Direction input_to_direction(char input)
 {
     switch (input)
     {
