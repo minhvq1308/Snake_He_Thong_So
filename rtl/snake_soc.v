@@ -2,23 +2,28 @@
 
 // ============================================================
 // Snake SoC
-// PicoRV32 + ROM + RAM
+// PicoRV32 + ROM + RAM + UART RX
 //
 // Memory map:
 //
 // 0x00000000 - 0x0000FFFF : ROM 64 KB
 // 0x00010000 - 0x00013FFF : RAM 16 KB
 //
+// 0x10000008 : UART DATA
+// 0x1000000C : UART STATUS
+//
+// UART STATUS:
+// bit 0 = 1 : co du lieu RX
+// bit 0 = 0 : khong co du lieu
+//
 // CPU reset PC : 0x00000000
 // Stack top    : 0x00014000
-//
-// Firmware:
-// Snake/build/snake_rom.hex
 // ============================================================
 
 module snake_soc (
-    input  wire clk,
-    input  wire resetn
+    input wire clk,
+    input wire resetn,
+    input wire uart_rx
 );
 
     // ========================================================
@@ -46,6 +51,9 @@ module snake_soc (
     localparam RAM_BASE = 32'h00010000;
     localparam RAM_END  = 32'h00014000;
 
+    localparam UART_DATA_ADDR   = 32'h10000008;
+    localparam UART_STATUS_ADDR = 32'h1000000C;
+
 
     // ========================================================
     // ROM
@@ -55,14 +63,21 @@ module snake_soc (
 
     reg [31:0] rom [0:16383];
 
-integer i;
+    integer i;
 
-initial begin
-    for (i = 0; i < 16384; i = i + 1)
-        rom[i] = 32'h00000013;
+    initial begin
 
-    $readmemh("Snake/build/snake_rom.hex", rom, 0, 1053);
-end
+        for (i = 0; i < 16384; i = i + 1)
+            rom[i] = 32'h00000013;
+
+        $readmemh(
+            "Snake/build/snake_rom.hex",
+            rom,
+            0,
+            1053
+        );
+
+    end
 
 
     // ========================================================
@@ -75,7 +90,88 @@ end
 
 
     // ========================================================
-    // ROM select
+    // UART RX
+    // ========================================================
+
+    wire [7:0] uart_data;
+    wire       uart_valid;
+
+    uart_rx uart_rx_inst (
+        .clk   (clk),
+        .rst   (~resetn),
+        .rx    (uart_rx),
+        .data  (uart_data),
+        .valid (uart_valid)
+    );
+
+
+    // ========================================================
+    // UART RX BUFFER
+    // ========================================================
+
+    reg [7:0] uart_buffer;
+    reg       uart_ready;
+
+
+    // ========================================================
+    // UART BUFFER CONTROL
+    //
+    // uart_valid = 1:
+    //     UART RX vua nhan xong 1 byte
+    //
+    //     uart_buffer <= uart_data
+    //     uart_ready  <= 1
+    //
+    // CPU doc UART_DATA:
+    //     uart_ready <= 0
+    //
+    // Dung else if de tranh 2 lenh cung ghi uart_ready
+    // trong cung mot clock.
+    // ========================================================
+
+    always @(posedge clk or negedge resetn) begin
+
+        if (!resetn) begin
+
+            uart_buffer <= 8'h00;
+            uart_ready  <= 1'b0;
+
+        end
+
+        else begin
+
+            // ------------------------------------------------
+            // UART vua nhan duoc ky tu moi
+            // ------------------------------------------------
+
+            if (uart_valid) begin
+
+                uart_buffer <= uart_data;
+                uart_ready  <= 1'b1;
+
+            end
+
+            // ------------------------------------------------
+            // CPU doc UART DATA
+            // ------------------------------------------------
+
+            else if (
+                mem_valid &&
+                (mem_addr == UART_DATA_ADDR) &&
+                (mem_wstrb == 4'b0000)
+            ) begin
+
+                uart_ready <= 1'b0;
+
+            end
+
+        end
+
+    end
+
+
+    // ========================================================
+    // ROM SELECT
     // ========================================================
 
     wire rom_sel;
@@ -87,7 +183,7 @@ end
 
 
     // ========================================================
-    // RAM select
+    // RAM SELECT
     // ========================================================
 
     wire ram_sel;
@@ -99,25 +195,54 @@ end
 
 
     // ========================================================
-    // Memory ready
+    // UART SELECT
     // ========================================================
 
-    assign mem_ready = rom_sel | ram_sel;
+    wire uart_data_sel;
+    wire uart_status_sel;
+
+    assign uart_data_sel =
+        mem_valid &&
+        (mem_addr == UART_DATA_ADDR);
+
+    assign uart_status_sel =
+        mem_valid &&
+        (mem_addr == UART_STATUS_ADDR);
 
 
     // ========================================================
-    // Read data
+    // MEMORY READY
+    // ========================================================
+
+    assign mem_ready =
+        rom_sel |
+        ram_sel |
+        uart_data_sel |
+        uart_status_sel;
+
+
+    // ========================================================
+    // READ DATA
     // ========================================================
 
     always @(*) begin
 
         mem_rdata = 32'h00000000;
 
+        // ----------------------------------------------------
+        // ROM
+        // ----------------------------------------------------
+
         if (rom_sel) begin
 
             mem_rdata = rom[mem_addr[15:2]];
 
         end
+
+        // ----------------------------------------------------
+        // RAM
+        // ----------------------------------------------------
+
         else if (ram_sel) begin
 
             mem_rdata =
@@ -125,11 +250,37 @@ end
 
         end
 
+        // ----------------------------------------------------
+        // UART DATA
+        // ----------------------------------------------------
+
+        else if (uart_data_sel) begin
+
+            mem_rdata = {
+                24'h000000,
+                uart_buffer
+            };
+
+        end
+
+        // ----------------------------------------------------
+        // UART STATUS
+        // ----------------------------------------------------
+
+        else if (uart_status_sel) begin
+
+            mem_rdata = {
+                31'h00000000,
+                uart_ready
+            };
+
+        end
+
     end
 
 
     // ========================================================
-    // RAM write
+    // RAM WRITE
     // ========================================================
 
     always @(posedge clk) begin
