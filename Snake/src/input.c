@@ -1,38 +1,49 @@
 #include "input.h"
 
 /*
- * UART của SoC RISC-V
+ * ============================================================
+ * UART MMIO
+ * ============================================================
  *
- * Địa chỉ này chỉ là địa chỉ tạm thời.
- * Sau khi thiết kế Verilog SoC, địa chỉ UART
- * phải trùng với địa chỉ được khai báo trong SoC.
+ * UART_DATA:
+ *     0x10000008
+ *
+ * UART_STATUS:
+ *     0x1000000C
+ *
+ * Bit 0 của UART_STATUS:
+ *     1 -> có dữ liệu
+ *     0 -> không có dữ liệu
+ * ============================================================
  */
+
 #define UART_BASE   0x10000008
 
 #define UART_RX     (*(volatile unsigned int *)(UART_BASE + 0))
 #define UART_STATUS (*(volatile unsigned int *)(UART_BASE + 4))
 
+
 void input_init(void)
 {
     /*
-     * UART được phần cứng SoC khởi tạo.
-     * Không cần cấu hình terminal như trên Linux.
+     * UART được phần cứng SoC xử lý.
+     * Firmware không cần cấu hình UART.
      */
 }
+
 
 void input_shutdown(void)
 {
     /*
-     * Không cần khôi phục terminal.
+     * Không cần làm gì với UART.
      */
 }
+
 
 char input_get(void)
 {
     /*
-     * Kiểm tra UART có dữ liệu hay chưa.
-     *
-     * Bit 0 = 1: có dữ liệu nhận được.
+     * Kiểm tra UART có dữ liệu hay không.
      */
     if (UART_STATUS & 1)
     {
@@ -41,6 +52,7 @@ char input_get(void)
 
     return '\0';
 }
+
 
 Direction input_to_direction(char input)
 {
@@ -63,6 +75,12 @@ Direction input_to_direction(char input)
             return RIGHT;
 
         default:
+            /*
+             * Không trả về RIGHT nữa.
+             *
+             * Hàm này chỉ được gọi với W/A/S/D
+             * từ main.c.
+             */
             return RIGHT;
     }
 }
