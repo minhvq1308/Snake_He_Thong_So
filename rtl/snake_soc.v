@@ -1,34 +1,16 @@
 `timescale 1ns / 1ps
 
-// ============================================================
-// Snake SoC
-// PicoRV32 + ROM + RAM + UART RX
-//
-// Memory map:
-//
-// 0x00000000 - 0x0000FFFF : ROM 64 KB
-// 0x00010000 - 0x00013FFF : RAM 16 KB
-//
-// 0x10000008 : UART DATA
-// 0x1000000C : UART STATUS
-//
-// UART STATUS:
-// bit 0 = 1 : co du lieu RX
-// bit 0 = 0 : khong co du lieu
-//
-// CPU reset PC : 0x00000000
-// Stack top    : 0x00014000
-// ============================================================
-
 module snake_soc (
     input wire clk,
     input wire resetn,
-    input wire uart_rx
-);
+    input wire uart_rx,
 
-    // ========================================================
-    // PicoRV32 memory interface
-    // ========================================================
+    output wire tft_cs,
+    output wire tft_dc,
+    output wire tft_rst,
+    output wire tft_sck,
+    output wire tft_mosi
+);
 
     wire        mem_valid;
     wire        mem_instr;
@@ -41,9 +23,11 @@ module snake_soc (
     reg [31:0] mem_rdata;
 
 
-    // ========================================================
-    // Memory map
-    // ========================================================
+    /*
+     * ============================================================
+     * MEMORY MAP
+     * ============================================================
+     */
 
     localparam ROM_BASE = 32'h00000000;
     localparam ROM_END  = 32'h00010000;
@@ -54,12 +38,16 @@ module snake_soc (
     localparam UART_DATA_ADDR   = 32'h10000008;
     localparam UART_STATUS_ADDR = 32'h1000000C;
 
+    localparam TFT_DATA_ADDR   = 32'h10000010;
+    localparam TFT_CMD_ADDR    = 32'h10000014;
+    localparam TFT_STATUS_ADDR = 32'h10000018;
 
-    // ========================================================
-    // ROM
-    //
-    // 64 KB / 4 bytes = 16384 words
-    // ========================================================
+
+    /*
+     * ============================================================
+     * ROM
+     * ============================================================
+     */
 
     reg [31:0] rom [0:16383];
 
@@ -72,26 +60,26 @@ module snake_soc (
 
         $readmemh(
             "Snake/build/snake_rom.hex",
-            rom,
-            0,
-            1053
+            rom
         );
 
     end
 
 
-    // ========================================================
-    // RAM
-    //
-    // 16 KB / 4 bytes = 4096 words
-    // ========================================================
+    /*
+     * ============================================================
+     * RAM
+     * ============================================================
+     */
 
     reg [31:0] ram [0:4095];
 
 
-    // ========================================================
-    // UART RX
-    // ========================================================
+    /*
+     * ============================================================
+     * UART
+     * ============================================================
+     */
 
     wire [7:0] uart_data;
     wire       uart_valid;
@@ -104,30 +92,9 @@ module snake_soc (
         .valid (uart_valid)
     );
 
-
-    // ========================================================
-    // UART RX BUFFER
-    // ========================================================
-
     reg [7:0] uart_buffer;
     reg       uart_ready;
 
-
-    // ========================================================
-    // UART BUFFER CONTROL
-    //
-    // uart_valid = 1:
-    //     UART RX vua nhan xong 1 byte
-    //
-    //     uart_buffer <= uart_data
-    //     uart_ready  <= 1
-    //
-    // CPU doc UART_DATA:
-    //     uart_ready <= 0
-    //
-    // Dung else if de tranh 2 lenh cung ghi uart_ready
-    // trong cung mot clock.
-    // ========================================================
 
     always @(posedge clk or negedge resetn) begin
 
@@ -140,20 +107,12 @@ module snake_soc (
 
         else begin
 
-            // ------------------------------------------------
-            // UART vua nhan duoc ky tu moi
-            // ------------------------------------------------
-
             if (uart_valid) begin
 
                 uart_buffer <= uart_data;
                 uart_ready  <= 1'b1;
 
             end
-
-            // ------------------------------------------------
-            // CPU doc UART DATA
-            // ------------------------------------------------
 
             else if (
                 mem_valid &&
@@ -164,17 +123,26 @@ module snake_soc (
                 uart_ready <= 1'b0;
 
             end
-
         end
-
     end
 
 
-    // ========================================================
-    // ROM SELECT
-    // ========================================================
+    /*
+     * ============================================================
+     * SELECT
+     * ============================================================
+     */
 
     wire rom_sel;
+    wire ram_sel;
+
+    wire uart_data_sel;
+    wire uart_status_sel;
+
+    wire tft_data_sel;
+    wire tft_cmd_sel;
+    wire tft_status_sel;
+
 
     assign rom_sel =
         mem_valid &&
@@ -182,66 +150,120 @@ module snake_soc (
         (mem_addr < ROM_END);
 
 
-    // ========================================================
-    // RAM SELECT
-    // ========================================================
-
-    wire ram_sel;
-
     assign ram_sel =
         mem_valid &&
         (mem_addr >= RAM_BASE) &&
         (mem_addr < RAM_END);
 
 
-    // ========================================================
-    // UART SELECT
-    // ========================================================
-
-    wire uart_data_sel;
-    wire uart_status_sel;
-
     assign uart_data_sel =
         mem_valid &&
         (mem_addr == UART_DATA_ADDR);
+
 
     assign uart_status_sel =
         mem_valid &&
         (mem_addr == UART_STATUS_ADDR);
 
 
-    // ========================================================
-    // MEMORY READY
-    // ========================================================
+    assign tft_data_sel =
+        mem_valid &&
+        (mem_addr == TFT_DATA_ADDR);
+
+
+    assign tft_cmd_sel =
+        mem_valid &&
+        (mem_addr == TFT_CMD_ADDR);
+
+
+    assign tft_status_sel =
+        mem_valid &&
+        (mem_addr == TFT_STATUS_ADDR);
+
+
+    /*
+     * ============================================================
+     * ST7735
+     * ============================================================
+     */
+
+    wire tft_busy;
+    wire tft_ready;
+
+    wire tft_cmd_valid;
+    wire tft_data_valid;
+
+
+    assign tft_cmd_valid =
+        tft_cmd_sel &&
+        (mem_wstrb != 4'b0000) &&
+        tft_ready;
+
+
+    assign tft_data_valid =
+        tft_data_sel &&
+        (mem_wstrb != 4'b0000) &&
+        tft_ready;
+
+
+    st7735 #(
+        .CLK_FREQ(27_000_000),
+        .SPI_DIV (4)
+    ) st7735_inst (
+
+        .clk        (clk),
+        .rst        (~resetn),
+
+        .cmd_valid  (tft_cmd_valid),
+        .cmd_data   (mem_wdata[7:0]),
+
+        .data_valid (tft_data_valid),
+        .data_in    (mem_wdata[7:0]),
+
+        .busy       (tft_busy),
+        .ready      (tft_ready),
+
+        .tft_cs     (tft_cs),
+        .tft_dc     (tft_dc),
+        .tft_rst    (tft_rst),
+        .tft_sck    (tft_sck),
+        .tft_mosi   (tft_mosi)
+    );
+
+
+    /*
+     * ============================================================
+     * CPU MEMORY READY
+     * ============================================================
+     */
 
     assign mem_ready =
         rom_sel |
         ram_sel |
         uart_data_sel |
-        uart_status_sel;
+        uart_status_sel |
+        (tft_cmd_sel  && tft_ready) |
+        (tft_data_sel && tft_ready) |
+        tft_status_sel;
 
 
-    // ========================================================
-    // READ DATA
-    // ========================================================
+    /*
+     * ============================================================
+     * CPU READ DATA
+     * ============================================================
+     */
 
     always @(*) begin
 
         mem_rdata = 32'h00000000;
 
-        // ----------------------------------------------------
-        // ROM
-        // ----------------------------------------------------
 
         if (rom_sel) begin
 
-            mem_rdata = rom[mem_addr[15:2]];
+            mem_rdata =
+                rom[mem_addr[15:2]];
 
         end
-
-        // ----------------------------------------------------
-        // RAM
-        // ----------------------------------------------------
 
         else if (ram_sel) begin
 
@@ -249,10 +271,6 @@ module snake_soc (
                 ram[(mem_addr - RAM_BASE) >> 2];
 
         end
-
-        // ----------------------------------------------------
-        // UART DATA
-        // ----------------------------------------------------
 
         else if (uart_data_sel) begin
 
@@ -263,10 +281,6 @@ module snake_soc (
 
         end
 
-        // ----------------------------------------------------
-        // UART STATUS
-        // ----------------------------------------------------
-
         else if (uart_status_sel) begin
 
             mem_rdata = {
@@ -276,12 +290,24 @@ module snake_soc (
 
         end
 
+        else if (tft_status_sel) begin
+
+            mem_rdata = {
+                30'h00000000,
+                tft_busy,
+                tft_ready
+            };
+
+        end
+
     end
 
 
-    // ========================================================
-    // RAM WRITE
-    // ========================================================
+    /*
+     * ============================================================
+     * RAM WRITE
+     * ============================================================
+     */
 
     always @(posedge clk) begin
 
@@ -308,49 +334,40 @@ module snake_soc (
     end
 
 
-    // ========================================================
-    // PicoRV32
-    // ========================================================
+    /*
+     * ============================================================
+     * PicoRV32
+     * ============================================================
+     */
 
     picorv32 #(
+        .STACKADDR       (32'h00014000),
+        .PROGADDR_RESET  (32'h00000000),
 
-        .STACKADDR(32'h00014000),
-
-        .PROGADDR_RESET(32'h00000000),
-
-        .ENABLE_IRQ(0),
-
-        .ENABLE_MUL(1),
-
-        .ENABLE_DIV(1),
-
-        .BARREL_SHIFTER(1),
-
-        .COMPRESSED_ISA(1),
-
-        .ENABLE_COUNTERS(1)
+        .ENABLE_IRQ      (0),
+        .ENABLE_MUL      (1),
+        .ENABLE_DIV      (1),
+        .BARREL_SHIFTER  (1),
+        .COMPRESSED_ISA  (1),
+        .ENABLE_COUNTERS (1)
 
     ) cpu (
 
-        .clk(clk),
+        .clk       (clk),
+        .resetn    (resetn),
 
-        .resetn(resetn),
+        .mem_valid (mem_valid),
+        .mem_instr (mem_instr),
 
-        .mem_valid(mem_valid),
+        .mem_ready (mem_ready),
 
-        .mem_instr(mem_instr),
+        .mem_addr  (mem_addr),
+        .mem_wdata (mem_wdata),
+        .mem_wstrb (mem_wstrb),
 
-        .mem_ready(mem_ready),
+        .mem_rdata (mem_rdata),
 
-        .mem_addr(mem_addr),
-
-        .mem_wdata(mem_wdata),
-
-        .mem_wstrb(mem_wstrb),
-
-        .mem_rdata(mem_rdata),
-
-        .irq(32'b0)
+        .irq       (32'b0)
 
     );
 
