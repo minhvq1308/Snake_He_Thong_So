@@ -1,16 +1,22 @@
 `timescale 1ns / 1ps
 
 module snake_soc (
-    input wire clk,
-    input wire resetn,
-    input wire uart_rx,
+    input  wire        clk,
+    input  wire        rst,
 
-    output wire tft_cs,
-    output wire tft_dc,
-    output wire tft_rst,
-    output wire tft_sck,
-    output wire tft_mosi
+    input  wire [3:0]  buttons,
+    input  wire        uart_rx,
+
+    output wire        tft_sck,
+    output wire        tft_mosi,
+    output wire        tft_cs,
+    output wire        tft_dc,
+    output wire        tft_rst
 );
+
+    // =========================================================
+    // PicoRV32 BUS
+    // =========================================================
 
     wire        mem_valid;
     wire        mem_instr;
@@ -18,347 +24,93 @@ module snake_soc (
 
     wire [31:0] mem_addr;
     wire [31:0] mem_wdata;
+    wire [31:0] mem_rdata;
+
     wire [3:0]  mem_wstrb;
 
-    reg [31:0] mem_rdata;
+    wire bus_write;
 
+    assign bus_write = |mem_wstrb;
 
-    /*
-     * ============================================================
-     * MEMORY MAP
-     * ============================================================
-     */
 
-    localparam ROM_BASE = 32'h00000000;
-    localparam ROM_END  = 32'h00010000;
+    // =========================================================
+    // PERIPHERAL READ DATA
+    // =========================================================
 
-    localparam RAM_BASE = 32'h00010000;
-    localparam RAM_END  = 32'h00014000;
+    wire [31:0] rom_rdata;
+    wire [31:0] ram_rdata;
+    wire [31:0] gpio_rdata;
+    wire [31:0] timer_rdata;
+    wire [31:0] uart_rdata;
+    wire [31:0] tft_rdata;
 
-    localparam UART_DATA_ADDR   = 32'h10000008;
-    localparam UART_STATUS_ADDR = 32'h1000000C;
 
-    localparam TFT_DATA_ADDR   = 32'h10000010;
-    localparam TFT_CMD_ADDR    = 32'h10000014;
-    localparam TFT_STATUS_ADDR = 32'h10000018;
+    // =========================================================
+    // ADDRESS DECODER
+    // =========================================================
 
+    // ROM:
+    // 0x00000000 - 0x00003FFF
+    wire sel_rom;
 
-    /*
-     * ============================================================
-     * ROM
-     * ============================================================
-     */
+    // RAM:
+    // 0x00004000 - 0x00007FFF
+    wire sel_ram;
 
-    reg [31:0] rom [0:16383];
+    // GPIO:
+    // 0x10000000
+    wire sel_gpio;
 
-    integer i;
+    // TIMER:
+    // 0x10000004
+    wire sel_timer;
 
-    initial begin
+    // UART:
+    // 0x10000008 - 0x1000000F
+    wire sel_uart;
 
-        for (i = 0; i < 16384; i = i + 1)
-            rom[i] = 32'h00000013;
+    // TFT:
+    // 0x10000010 - 0x1000001F
+    wire sel_tft;
 
-        $readmemh(
-            "Snake/build/snake_rom.hex",
-            rom
-        );
+    assign sel_rom =
+        (mem_addr[31:14] == 18'h00000);
 
-    end
+    assign sel_ram =
+        (mem_addr[31:14] == 18'h00001);
 
+    assign sel_gpio =
+        (mem_addr == 32'h10000000);
 
-    /*
-     * ============================================================
-     * RAM
-     * ============================================================
-     */
+    assign sel_timer =
+        (mem_addr == 32'h10000004);
 
-    reg [31:0] ram [0:4095];
+    assign sel_uart =
+        (mem_addr >= 32'h10000008) &&
+        (mem_addr <  32'h10000010);
 
+    assign sel_tft =
+        (mem_addr >= 32'h10000010) &&
+        (mem_addr <  32'h10000020);
 
-    /*
-     * ============================================================
-     * UART
-     * ============================================================
-     */
 
-    wire [7:0] uart_data;
-    wire       uart_valid;
-
-    uart_rx uart_rx_inst (
-        .clk   (clk),
-        .rst   (~resetn),
-        .rx    (uart_rx),
-        .data  (uart_data),
-        .valid (uart_valid)
-    );
-
-    reg [7:0] uart_buffer;
-    reg       uart_ready;
-
-
-    always @(posedge clk or negedge resetn) begin
-
-        if (!resetn) begin
-
-            uart_buffer <= 8'h00;
-            uart_ready  <= 1'b0;
-
-        end
-
-        else begin
-
-            if (uart_valid) begin
-
-                uart_buffer <= uart_data;
-                uart_ready  <= 1'b1;
-
-            end
-
-            else if (
-                mem_valid &&
-                (mem_addr == UART_DATA_ADDR) &&
-                (mem_wstrb == 4'b0000)
-            ) begin
-
-                uart_ready <= 1'b0;
-
-            end
-        end
-    end
-
-
-    /*
-     * ============================================================
-     * SELECT
-     * ============================================================
-     */
-
-    wire rom_sel;
-    wire ram_sel;
-
-    wire uart_data_sel;
-    wire uart_status_sel;
-
-    wire tft_data_sel;
-    wire tft_cmd_sel;
-    wire tft_status_sel;
-
-
-    assign rom_sel =
-        mem_valid &&
-        (mem_addr >= ROM_BASE) &&
-        (mem_addr < ROM_END);
-
-
-    assign ram_sel =
-        mem_valid &&
-        (mem_addr >= RAM_BASE) &&
-        (mem_addr < RAM_END);
-
-
-    assign uart_data_sel =
-        mem_valid &&
-        (mem_addr == UART_DATA_ADDR);
-
-
-    assign uart_status_sel =
-        mem_valid &&
-        (mem_addr == UART_STATUS_ADDR);
-
-
-    assign tft_data_sel =
-        mem_valid &&
-        (mem_addr == TFT_DATA_ADDR);
-
-
-    assign tft_cmd_sel =
-        mem_valid &&
-        (mem_addr == TFT_CMD_ADDR);
-
-
-    assign tft_status_sel =
-        mem_valid &&
-        (mem_addr == TFT_STATUS_ADDR);
-
-
-    /*
-     * ============================================================
-     * ST7735
-     * ============================================================
-     */
-
-    wire tft_busy;
-    wire tft_ready;
-
-    wire tft_cmd_valid;
-    wire tft_data_valid;
-
-
-    assign tft_cmd_valid =
-        tft_cmd_sel &&
-        (mem_wstrb != 4'b0000) &&
-        tft_ready;
-
-
-    assign tft_data_valid =
-        tft_data_sel &&
-        (mem_wstrb != 4'b0000) &&
-        tft_ready;
-
-
-    st7735 #(
-        .CLK_FREQ(27_000_000),
-        .SPI_DIV (4)
-    ) st7735_inst (
-
-        .clk        (clk),
-        .rst        (~resetn),
-
-        .cmd_valid  (tft_cmd_valid),
-        .cmd_data   (mem_wdata[7:0]),
-
-        .data_valid (tft_data_valid),
-        .data_in    (mem_wdata[7:0]),
-
-        .busy       (tft_busy),
-        .ready      (tft_ready),
-
-        .tft_cs     (tft_cs),
-        .tft_dc     (tft_dc),
-        .tft_rst    (tft_rst),
-        .tft_sck    (tft_sck),
-        .tft_mosi   (tft_mosi)
-    );
-
-
-    /*
-     * ============================================================
-     * CPU MEMORY READY
-     * ============================================================
-     */
-
-    assign mem_ready =
-        rom_sel |
-        ram_sel |
-        uart_data_sel |
-        uart_status_sel |
-        (tft_cmd_sel  && tft_ready) |
-        (tft_data_sel && tft_ready) |
-        tft_status_sel;
-
-
-    /*
-     * ============================================================
-     * CPU READ DATA
-     * ============================================================
-     */
-
-    always @(*) begin
-
-        mem_rdata = 32'h00000000;
-
-
-        if (rom_sel) begin
-
-            mem_rdata =
-                rom[mem_addr[15:2]];
-
-        end
-
-        else if (ram_sel) begin
-
-            mem_rdata =
-                ram[(mem_addr - RAM_BASE) >> 2];
-
-        end
-
-        else if (uart_data_sel) begin
-
-            mem_rdata = {
-                24'h000000,
-                uart_buffer
-            };
-
-        end
-
-        else if (uart_status_sel) begin
-
-            mem_rdata = {
-                31'h00000000,
-                uart_ready
-            };
-
-        end
-
-        else if (tft_status_sel) begin
-
-            mem_rdata = {
-                30'h00000000,
-                tft_busy,
-                tft_ready
-            };
-
-        end
-
-    end
-
-
-    /*
-     * ============================================================
-     * RAM WRITE
-     * ============================================================
-     */
-
-    always @(posedge clk) begin
-
-        if (resetn && ram_sel) begin
-
-            if (mem_wstrb[0])
-                ram[(mem_addr - RAM_BASE) >> 2][7:0]
-                    <= mem_wdata[7:0];
-
-            if (mem_wstrb[1])
-                ram[(mem_addr - RAM_BASE) >> 2][15:8]
-                    <= mem_wdata[15:8];
-
-            if (mem_wstrb[2])
-                ram[(mem_addr - RAM_BASE) >> 2][23:16]
-                    <= mem_wdata[23:16];
-
-            if (mem_wstrb[3])
-                ram[(mem_addr - RAM_BASE) >> 2][31:24]
-                    <= mem_wdata[31:24];
-
-        end
-
-    end
-
-
-    /*
-     * ============================================================
-     * PicoRV32
-     * ============================================================
-     */
+    // =========================================================
+    // PicoRV32 CPU
+    // =========================================================
 
     picorv32 #(
-        .STACKADDR       (32'h00014000),
-        .PROGADDR_RESET  (32'h00000000),
-
-        .ENABLE_IRQ      (0),
-        .ENABLE_MUL      (1),
-        .ENABLE_DIV      (1),
-        .BARREL_SHIFTER  (1),
-        .COMPRESSED_ISA  (1),
-        .ENABLE_COUNTERS (1)
-
+        .ENABLE_COUNTERS   (0),
+        .ENABLE_COUNTERS64 (0),
+        .COMPRESSED_ISA    (0),
+        .ENABLE_MUL        (1),
+        .ENABLE_DIV        (1),
+        .ENABLE_IRQ        (0)
     ) cpu (
-
         .clk       (clk),
-        .resetn    (resetn),
+        .resetn    (~rst),
 
         .mem_valid (mem_valid),
         .mem_instr (mem_instr),
-
         .mem_ready (mem_ready),
 
         .mem_addr  (mem_addr),
@@ -367,8 +119,384 @@ module snake_soc (
 
         .mem_rdata (mem_rdata),
 
-        .irq       (32'b0)
-
+        .trap      ()
     );
+
+
+    // =========================================================
+    // ROM
+    // =========================================================
+
+    rom #(
+        .ADDR_WIDTH(14)
+    ) u_rom (
+        .clk   (clk),
+        .addr  (mem_addr),
+        .rdata (rom_rdata)
+    );
+
+
+    // =========================================================
+    // RAM
+    // =========================================================
+
+    // ram.v tự xử lý:
+    // ram_addr = mem_addr - 0x4000
+    //
+    // Vì vậy ở đây truyền mem_addr nguyên vẹn.
+
+    ram #(
+        .ADDR_WIDTH(14)
+    ) u_ram (
+        .clk        (clk),
+
+        .mem_valid  (mem_valid && sel_ram),
+        .mem_instr  (mem_instr),
+
+        .mem_write  (bus_write),
+        .mem_wstrb  (mem_wstrb),
+
+        .mem_addr   (mem_addr),
+        .mem_wdata  (mem_wdata),
+
+        .mem_rdata  (ram_rdata),
+
+        .we         (bus_write)
+    );
+
+
+    // =========================================================
+    // GPIO BUTTONS
+    // =========================================================
+
+    gpio_buttons u_gpio (
+        .clk       (clk),
+        .rst       (rst),
+
+        .buttons   (buttons),
+
+        .bus_valid (mem_valid && sel_gpio),
+        .bus_write (bus_write),
+
+        .bus_addr  (mem_addr),
+        .bus_wdata (mem_wdata),
+
+        .bus_rdata (gpio_rdata)
+    );
+
+
+    // =========================================================
+    // TIMER
+    // =========================================================
+
+    timer #(
+        .DIV(3_375_000)
+    ) u_timer (
+        .clk       (clk),
+        .rst       (rst),
+
+        .bus_valid (mem_valid && sel_timer),
+        .bus_write (bus_write),
+
+        .bus_addr  (mem_addr),
+        .bus_wdata (mem_wdata),
+
+        .bus_rdata (timer_rdata)
+    );
+
+
+    // =========================================================
+    // UART RX
+    // =========================================================
+
+    wire [7:0] uart_data;
+    wire       uart_valid;
+
+    uart_rx #(
+        .CLKS_PER_BIT(234)
+    ) u_uart_rx (
+        .clk        (clk),
+        .rst        (rst),
+
+        .rx         (uart_rx),
+
+        .data_out   (uart_data),
+        .data_valid (uart_valid)
+    );
+
+
+    // =========================================================
+    // UART BUFFER
+    //
+    // uart_rx tạo data_valid chỉ 1 clock.
+    // CPU polling có thể bỏ lỡ xung này.
+    //
+    // Vì vậy lưu byte UART lại cho đến khi CPU đọc.
+    // =========================================================
+
+    reg [7:0] uart_buffer;
+    reg       uart_buffer_valid;
+
+    wire uart_read_data;
+    wire uart_read_status;
+
+    assign uart_read_data =
+        mem_valid &&
+        sel_uart &&
+        (mem_addr == 32'h10000008) &&
+        !bus_write;
+
+    assign uart_read_status =
+        mem_valid &&
+        sel_uart &&
+        (mem_addr == 32'h1000000C) &&
+        !bus_write;
+
+
+    always @(posedge clk) begin
+
+        if (rst) begin
+            uart_buffer       <= 8'h00;
+            uart_buffer_valid <= 1'b0;
+        end
+
+        else begin
+
+            // Có byte UART mới
+            if (uart_valid) begin
+                uart_buffer       <= uart_data;
+                uart_buffer_valid <= 1'b1;
+            end
+
+            // CPU đọc UART_DATA
+            else if (uart_read_data) begin
+                uart_buffer_valid <= 1'b0;
+            end
+
+        end
+    end
+
+
+    assign uart_rdata =
+        (mem_addr == 32'h10000008) ?
+            {24'h000000, uart_buffer} :
+
+        (mem_addr == 32'h1000000C) ?
+            {31'b0, uart_buffer_valid} :
+
+        32'h00000000;
+
+
+    // =========================================================
+    // TFT ST7735
+    // =========================================================
+
+    wire        tft_cmd_valid;
+    wire [31:0] tft_cmd_data;
+
+    wire        tft_data_valid;
+    wire [31:0] tft_data_data;
+
+    wire        tft_cmd_ready;
+    wire        tft_data_ready;
+
+
+    // =========================================================
+    // TFT ADDRESS MAP
+    //
+    // ĐÚNG THEO FIRMWARE:
+    //
+    // TFT_CMD    = 0x10000010
+    // TFT_DATA   = 0x10000014
+    // TFT_STATUS = 0x10000018
+    // =========================================================
+
+    wire tft_is_data;
+    wire tft_is_cmd;
+    wire tft_is_status;
+
+    assign tft_is_cmd =
+        (mem_addr == 32'h10000010);
+
+    assign tft_is_data =
+        (mem_addr == 32'h10000014);
+
+    assign tft_is_status =
+        (mem_addr == 32'h10000018);
+
+
+    // =========================================================
+    // TFT COMMAND WRITE
+    // =========================================================
+
+    assign tft_cmd_valid =
+        mem_valid &&
+        sel_tft &&
+        tft_is_cmd &&
+        bus_write &&
+        tft_cmd_ready;
+
+    assign tft_cmd_data =
+        mem_wdata;
+
+
+    // =========================================================
+    // TFT DATA WRITE
+    // =========================================================
+
+    assign tft_data_valid =
+        mem_valid &&
+        sel_tft &&
+        tft_is_data &&
+        bus_write &&
+        tft_data_ready;
+
+    assign tft_data_data =
+        mem_wdata;
+
+
+    // =========================================================
+    // TFT MODULE
+    // =========================================================
+
+    tft_st7735 u_tft (
+        .clk        (clk),
+        .rst        (rst),
+
+        .cmd_valid  (tft_cmd_valid),
+        .cmd_data   (tft_cmd_data),
+
+        .data_valid (tft_data_valid),
+        .data_data  (tft_data_data),
+
+        .cmd_ready  (tft_cmd_ready),
+        .data_ready (tft_data_ready),
+
+        .bus_rdata  (tft_rdata),
+
+        .spi_sck    (tft_sck),
+        .spi_mosi   (tft_mosi),
+
+        .tft_cs     (tft_cs),
+        .tft_dc     (tft_dc),
+        .tft_rst    (tft_rst)
+    );
+
+
+    // =========================================================
+    // TFT STATUS READ DATA
+    //
+    // bit 0 = cmd_ready
+    // bit 1 = data_ready
+    // =========================================================
+
+    wire [31:0] tft_status_rdata;
+
+    assign tft_status_rdata =
+        {30'b0, tft_data_ready, tft_cmd_ready};
+
+
+    // =========================================================
+    // READ DATA MUX
+    // =========================================================
+
+    reg [31:0] read_data;
+
+    always @(*) begin
+
+        read_data = 32'h00000000;
+
+        if (sel_rom)
+            read_data = rom_rdata;
+
+        else if (sel_ram)
+            read_data = ram_rdata;
+
+        else if (sel_gpio)
+            read_data = gpio_rdata;
+
+        else if (sel_timer)
+            read_data = timer_rdata;
+
+        else if (sel_uart)
+            read_data = uart_rdata;
+
+        else if (sel_tft) begin
+
+            if (tft_is_status)
+                read_data = tft_status_rdata;
+
+            else
+                read_data = tft_rdata;
+
+        end
+
+        else
+            read_data = 32'h00000000;
+
+    end
+
+    assign mem_rdata = read_data;
+
+
+    // =========================================================
+    // CPU MEMORY READY
+    // =========================================================
+
+    assign mem_ready =
+        mem_valid &&
+        (
+            // ROM read
+            sel_rom
+
+            ||
+
+            // RAM
+            sel_ram
+
+            ||
+
+            // GPIO
+            sel_gpio
+
+            ||
+
+            // TIMER
+            sel_timer
+
+            ||
+
+            // UART
+            sel_uart
+
+            ||
+
+            // TFT STATUS read
+            (
+                sel_tft &&
+                tft_is_status
+            )
+
+            ||
+
+            // TFT COMMAND write
+            (
+                sel_tft &&
+                tft_is_cmd &&
+                bus_write &&
+                tft_cmd_ready
+            )
+
+            ||
+
+            // TFT DATA write
+            (
+                sel_tft &&
+                tft_is_data &&
+                bus_write &&
+                tft_data_ready
+            )
+        );
+
 
 endmodule

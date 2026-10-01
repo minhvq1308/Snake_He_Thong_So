@@ -1,103 +1,112 @@
 module uart_rx #(
-    parameter CLK_FREQ = 27_000_000,
-    parameter BAUD     = 115200
+    parameter integer CLKS_PER_BIT = 234
 )(
     input  wire       clk,
     input  wire       rst,
     input  wire       rx,
 
-    output reg [7:0]  data,
-    output reg        valid
+    output reg [7:0]  data_out,
+    output reg        data_valid
 );
 
-    localparam integer CLKS_PER_BIT = CLK_FREQ / BAUD;
+    localparam IDLE  = 2'd0;
+    localparam START = 2'd1;
+    localparam DATA  = 2'd2;
+    localparam STOP  = 2'd3;
 
-    reg rx1;
-    reg rx2;
+    reg [1:0] state;
 
-    reg [2:0] state;
-    reg [31:0] count;
-    reg [2:0] bit_index;
-    reg [7:0] shift;
+    reg [15:0] clk_count;
+    reg [2:0]  bit_index;
+    reg [7:0]  rx_data;
 
-    localparam IDLE  = 3'd0;
-    localparam START = 3'd1;
-    localparam DATA  = 3'd2;
-    localparam STOP  = 3'd3;
+    always @(posedge clk) begin
 
-    always @(posedge clk or posedge rst) begin
         if (rst) begin
-            rx1       <= 1;
-            rx2       <= 1;
-            state     <= IDLE;
-            count     <= 0;
-            bit_index <= 0;
-            shift     <= 0;
-            data      <= 0;
-            valid     <= 0;
+            state      <= IDLE;
+            clk_count  <= 16'd0;
+            bit_index  <= 3'd0;
+            rx_data    <= 8'd0;
+            data_out   <= 8'd0;
+            data_valid <= 1'b0;
         end
+
         else begin
-            rx1   <= rx;
-            rx2   <= rx1;
-            valid <= 0;
+
+            data_valid <= 1'b0;
 
             case (state)
 
                 IDLE: begin
-                    count <= 0;
+                    clk_count <= 16'd0;
+                    bit_index <= 3'd0;
 
-                    if (!rx2) begin
+                    if (!rx) begin
                         state <= START;
                     end
                 end
 
                 START: begin
-                    if (count == CLKS_PER_BIT/2) begin
-                        count <= 0;
 
-                        if (!rx2)
+                    if (clk_count == (CLKS_PER_BIT / 2)) begin
+
+                        clk_count <= 16'd0;
+
+                        if (!rx) begin
                             state <= DATA;
-                        else
+                        end
+                        else begin
                             state <= IDLE;
+                        end
                     end
+
                     else begin
-                        count <= count + 1;
+                        clk_count <= clk_count + 1'b1;
                     end
                 end
 
                 DATA: begin
-                    if (count == CLKS_PER_BIT-1) begin
-                        count <= 0;
 
-                        shift[bit_index] <= rx2;
+                    if (clk_count == CLKS_PER_BIT - 1) begin
+
+                        clk_count <= 16'd0;
+
+                        rx_data[bit_index] <= rx;
 
                         if (bit_index == 3'd7) begin
-                            bit_index <= 0;
+                            bit_index <= 3'd0;
                             state <= STOP;
                         end
                         else begin
-                            bit_index <= bit_index + 1;
+                            bit_index <= bit_index + 1'b1;
                         end
                     end
+
                     else begin
-                        count <= count + 1;
+                        clk_count <= clk_count + 1'b1;
                     end
                 end
 
                 STOP: begin
-                    if (count == CLKS_PER_BIT-1) begin
-                        count <= 0;
-                        data  <= shift;
-                        valid <= 1;
+
+                    if (clk_count == CLKS_PER_BIT - 1) begin
+
+                        clk_count <= 16'd0;
+
                         state <= IDLE;
+
+                        data_out <= rx_data;
+                        data_valid <= 1'b1;
                     end
+
                     else begin
-                        count <= count + 1;
+                        clk_count <= clk_count + 1'b1;
                     end
                 end
 
-                default:
+                default: begin
                     state <= IDLE;
+                end
 
             endcase
         end
