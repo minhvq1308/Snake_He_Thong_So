@@ -1,16 +1,17 @@
 #ifndef INPUT_H
 #define INPUT_H
 
-#include "types.h"
+#include "snake.h"
+#include "game.h"
 
-void input_init(void);
+int input_get_uart_direction(Direction *direction);
 
-void input_shutdown(void);
+int input_get_button_direction(Direction *direction);
 
-char input_get(void);
+int input_get_pause(void);
 
-Direction input_to_direction(
-    char input
-);
+int input_get_restart(void);
+
+int input_get_difficulty(Difficulty *difficulty);
 
 #endif

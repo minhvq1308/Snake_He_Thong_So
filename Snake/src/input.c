@@ -1,86 +1,157 @@
 #include "input.h"
-
-/*
- * ============================================================
- * UART MMIO
- * ============================================================
- *
- * UART_DATA:
- *     0x10000008
- *
- * UART_STATUS:
- *     0x1000000C
- *
- * Bit 0 của UART_STATUS:
- *     1 -> có dữ liệu
- *     0 -> không có dữ liệu
- * ============================================================
- */
-
-#define UART_BASE   0x10000008
-
-#define UART_RX     (*(volatile unsigned int *)(UART_BASE + 0))
-#define UART_STATUS (*(volatile unsigned int *)(UART_BASE + 4))
+#include "config.h"
 
 
-void input_init(void)
+static Direction uart_to_direction(uint8_t c)
 {
-    /*
-     * UART được phần cứng SoC xử lý.
-     * Firmware không cần cấu hình UART.
-     */
-}
-
-
-void input_shutdown(void)
-{
-    /*
-     * Không cần làm gì với UART.
-     */
-}
-
-
-char input_get(void)
-{
-    /*
-     * Kiểm tra UART có dữ liệu hay không.
-     */
-    if (UART_STATUS & 1)
+    switch (c)
     {
-        return (char)UART_RX;
-    }
-
-    return '\0';
-}
-
-
-Direction input_to_direction(char input)
-{
-    switch (input)
-    {
-        case 'w':
         case 'W':
-            return UP;
+        case 'w':
+            return DIR_UP;
 
-        case 's':
-        case 'S':
-            return DOWN;
-
-        case 'a':
-        case 'A':
-            return LEFT;
-
-        case 'd':
         case 'D':
-            return RIGHT;
+        case 'd':
+            return DIR_RIGHT;
+
+        case 'S':
+        case 's':
+            return DIR_DOWN;
+
+        case 'A':
+        case 'a':
+            return DIR_LEFT;
 
         default:
-            /*
-             * Không trả về RIGHT nữa.
-             *
-             * Hàm này chỉ được gọi với W/A/S/D
-             * từ main.c.
-             */
-            return RIGHT;
+            return DIR_RIGHT;
     }
+}
+
+
+int input_get_uart_direction(Direction *direction)
+{
+    uint32_t status;
+    uint8_t data;
+
+    status = UART_STATUS;
+
+    if ((status & 1u) == 0)
+    {
+        return 0;
+    }
+
+    data = (uint8_t)UART_RX;
+
+    if (data == 'W' || data == 'w' ||
+        data == 'A' || data == 'a' ||
+        data == 'S' || data == 's' ||
+        data == 'D' || data == 'd')
+    {
+        *direction = uart_to_direction(data);
+        return 1;
+    }
+
+    return 0;
+}
+
+
+int input_get_button_direction(Direction *direction)
+{
+    uint32_t buttons;
+
+    buttons = GPIO_REG;
+
+    /*
+     * Buttons are active-low because
+     * external buttons use pull-up.
+     */
+
+    if ((buttons & BUTTON_UP) == 0)
+    {
+        *direction = DIR_UP;
+        return 1;
+    }
+
+    if ((buttons & BUTTON_RIGHT) == 0)
+    {
+        *direction = DIR_RIGHT;
+        return 1;
+    }
+
+    if ((buttons & BUTTON_DOWN) == 0)
+    {
+        *direction = DIR_DOWN;
+        return 1;
+    }
+
+    if ((buttons & BUTTON_LEFT) == 0)
+    {
+        *direction = DIR_LEFT;
+        return 1;
+    }
+
+    return 0;
+}
+
+
+int input_get_pause(void)
+{
+    uint32_t data;
+
+    if ((UART_STATUS & 1u) == 0)
+    {
+        return 0;
+    }
+
+    data = UART_RX;
+
+    return (data == 'P' || data == 'p');
+}
+
+
+int input_get_restart(void)
+{
+    uint32_t data;
+
+    if ((UART_STATUS & 1u) == 0)
+    {
+        return 0;
+    }
+
+    data = UART_RX;
+
+    return (data == 'R' || data == 'r');
+}
+
+
+int input_get_difficulty(Difficulty *difficulty)
+{
+    uint32_t data;
+
+    if ((UART_STATUS & 1u) == 0)
+    {
+        return 0;
+    }
+
+    data = UART_RX;
+
+    if (data == '1')
+    {
+        *difficulty = DIFFICULTY_EASY;
+        return 1;
+    }
+
+    if (data == '2')
+    {
+        *difficulty = DIFFICULTY_NORMAL;
+        return 1;
+    }
+
+    if (data == '3')
+    {
+        *difficulty = DIFFICULTY_HARD;
+        return 1;
+    }
+
+    return 0;
 }

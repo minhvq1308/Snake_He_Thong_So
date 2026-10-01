@@ -1,51 +1,81 @@
 #include "snake.h"
 
+static int is_opposite(Direction a, Direction b)
+{
+    if (a == DIR_UP    && b == DIR_DOWN)  return 1;
+    if (a == DIR_DOWN  && b == DIR_UP)    return 1;
+    if (a == DIR_LEFT  && b == DIR_RIGHT) return 1;
+    if (a == DIR_RIGHT && b == DIR_LEFT)  return 1;
+
+    return 0;
+}
+
+
 void snake_init(Snake *snake)
 {
-    snake->length = INITIAL_SNAKE_LENGTH;
+    snake->length = 3;
 
-    snake->direction = RIGHT;
+    snake->body[0].x = BOARD_WIDTH / 2;
+    snake->body[0].y = BOARD_HEIGHT / 2;
 
-    int start_x = BOARD_WIDTH / 2;
-    int start_y = BOARD_HEIGHT / 2;
+    snake->body[1].x = snake->body[0].x - 1;
+    snake->body[1].y = snake->body[0].y;
 
-    for (int i = 0; i < snake->length; i++)
+    snake->body[2].x = snake->body[1].x - 1;
+    snake->body[2].y = snake->body[1].y;
+
+    snake->direction = DIR_RIGHT;
+    snake->next_direction = DIR_RIGHT;
+}
+
+
+void snake_set_direction(Snake *snake, Direction direction)
+{
+    if (!is_opposite(snake->direction, direction))
     {
-        snake->body[i].x = start_x - i;
-        snake->body[i].y = start_y;
+        snake->next_direction = direction;
     }
 }
 
+
 void snake_move(Snake *snake)
 {
-    for (int i = snake->length - 1; i > 0; i--)
+    uint16_t i;
+
+    snake->direction = snake->next_direction;
+
+    for (i = snake->length - 1; i > 0; i--)
     {
         snake->body[i] = snake->body[i - 1];
     }
 
     switch (snake->direction)
     {
-        case UP:
+        case DIR_UP:
             snake->body[0].y--;
             break;
 
-        case DOWN:
+        case DIR_RIGHT:
+            snake->body[0].x++;
+            break;
+
+        case DIR_DOWN:
             snake->body[0].y++;
             break;
 
-        case LEFT:
+        case DIR_LEFT:
             snake->body[0].x--;
             break;
 
-        case RIGHT:
-            snake->body[0].x++;
+        default:
             break;
     }
 }
 
+
 void snake_grow(Snake *snake)
 {
-    if (snake->length < MAX_SNAKE_LENGTH)
+    if (snake->length < SNAKE_MAX_LENGTH)
     {
         snake->body[snake->length] =
             snake->body[snake->length - 1];
@@ -54,36 +84,32 @@ void snake_grow(Snake *snake)
     }
 }
 
-void snake_set_direction(
-    Snake *snake,
-    Direction direction
-)
+
+int snake_check_self_collision(const Snake *snake)
 {
-    if (snake->direction == UP && direction == DOWN)
-        return;
+    uint16_t i;
 
-    if (snake->direction == DOWN && direction == UP)
-        return;
+    for (i = 1; i < snake->length; i++)
+    {
+        if (snake->body[0].x == snake->body[i].x &&
+            snake->body[0].y == snake->body[i].y)
+        {
+            return 1;
+        }
+    }
 
-    if (snake->direction == LEFT && direction == RIGHT)
-        return;
-
-    if (snake->direction == RIGHT && direction == LEFT)
-        return;
-
-    snake->direction = direction;
+    return 0;
 }
 
-int snake_hits_self(
-    const Snake *snake
-)
-{
-    Point head = snake->body[0];
 
-    for (int i = 1; i < snake->length; i++)
+int snake_contains(const Snake *snake, int16_t x, int16_t y)
+{
+    uint16_t i;
+
+    for (i = 0; i < snake->length; i++)
     {
-        if (head.x == snake->body[i].x &&
-            head.y == snake->body[i].y)
+        if (snake->body[i].x == x &&
+            snake->body[i].y == y)
         {
             return 1;
         }

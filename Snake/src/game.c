@@ -1,165 +1,179 @@
 #include "game.h"
-#include "food.h"
-#include "config.h"
+
+
+static uint32_t difficulty_speed(Difficulty difficulty)
+{
+    switch (difficulty)
+    {
+        case DIFFICULTY_EASY:
+            return SPEED_EASY;
+
+        case DIFFICULTY_NORMAL:
+            return SPEED_NORMAL;
+
+        case DIFFICULTY_HARD:
+            return SPEED_HARD;
+
+        default:
+            return SPEED_NORMAL;
+    }
+}
+
+
+static int wall_collision(const Snake *snake)
+{
+    int16_t x = snake->body[0].x;
+    int16_t y = snake->body[0].y;
+
+    if (x < 0) return 1;
+    if (x >= BOARD_WIDTH) return 1;
+
+    if (y < 0) return 1;
+    if (y >= BOARD_HEIGHT) return 1;
+
+    return 0;
+}
+
 
 void game_init(Game *game)
 {
-    snake_init(&game->snake);
-
-    game->score = 0;
     game->high_score = 0;
 
-    game->difficulty = NORMAL;
+    game->difficulty = DIFFICULTY_NORMAL;
 
-    game->speed_ms = NORMAL_SPEED;
+    game->score = 0;
 
     game->state = GAME_START;
 
-    food_spawn(
-        &game->food,
-        &game->snake
-    );
-}
+    game->speed_ticks =
+        difficulty_speed(game->difficulty);
 
-void game_set_difficulty(
-    Game *game,
-    Difficulty difficulty
-)
-{
-    game->difficulty = difficulty;
-
-    switch (difficulty)
-    {
-        case EASY:
-            game->speed_ms = EASY_SPEED;
-            break;
-
-        case NORMAL:
-            game->speed_ms = NORMAL_SPEED;
-            break;
-
-        case HARD:
-            game->speed_ms = HARD_SPEED;
-            break;
-
-        default:
-            game->difficulty = NORMAL;
-            game->speed_ms = NORMAL_SPEED;
-            break;
-    }
-}
-
-void game_update(Game *game)
-{
-    if (game->state != GAME_PLAYING)
-        return;
-
-    snake_move(&game->snake);
-
-    /*
-     * Check wall collision
-     */
-    if (game_check_wall_collision(&game->snake))
-    {
-        game->state = GAME_OVER;
-        return;
-    }
-
-    /*
-     * Check self collision
-     */
-    if (snake_hits_self(&game->snake))
-    {
-        game->state = GAME_OVER;
-        return;
-    }
-
-    /*
-     * Check food
-     */
-    if (food_is_eaten(
-            game->food,
-            game->snake.body[0]))
-    {
-        snake_grow(&game->snake);
-
-        game->score += SCORE_PER_FOOD;
-
-        /*
-         * Update high score
-         */
-        if (game->score > game->high_score)
-        {
-            game->high_score = game->score;
-        }
-
-        /*
-         * Spawn new food
-         */
-        food_spawn(
-            &game->food,
-            &game->snake
-        );
-    }
-}
-
-void game_restart(Game *game)
-{
-    int old_high_score = game->high_score;
-    Difficulty old_difficulty = game->difficulty;
+    game->tick_count = 0;
 
     snake_init(&game->snake);
 
+    food_init();
+
+    food_spawn(&game->food, &game->snake);
+}
+
+
+void game_start(Game *game)
+{
     game->score = 0;
 
-    /*
-     * Keep high score
-     */
-    game->high_score = old_high_score;
-
-    /*
-     * Keep selected difficulty
-     */
-    game->difficulty = old_difficulty;
-
-    game_set_difficulty(
-        game,
-        old_difficulty
-    );
+    game->tick_count = 0;
 
     game->state = GAME_PLAYING;
 
-    food_spawn(
-        &game->food,
-        &game->snake
-    );
+    snake_init(&game->snake);
+
+    food_spawn(&game->food, &game->snake);
 }
 
-void game_toggle_pause(Game *game)
+
+void game_restart(Game *game)
+{
+    game_start(game);
+}
+
+
+void game_pause(Game *game)
 {
     if (game->state == GAME_PLAYING)
     {
         game->state = GAME_PAUSED;
     }
-    else if (game->state == GAME_PAUSED)
+}
+
+
+void game_resume(Game *game)
+{
+    if (game->state == GAME_PAUSED)
     {
         game->state = GAME_PLAYING;
     }
 }
 
-int game_check_wall_collision(
-    const Snake *snake
-)
-{
-    Point head = snake->body[0];
 
-    if (head.x < 0 ||
-        head.x >= BOARD_WIDTH ||
-        head.y < 0 ||
-        head.y >= BOARD_HEIGHT)
+void game_set_difficulty(Game *game,
+                         Difficulty difficulty)
+{
+    game->difficulty = difficulty;
+
+    game->speed_ticks =
+        difficulty_speed(difficulty);
+}
+
+
+void game_set_direction(Game *game,
+                        Direction direction)
+{
+    if (game->state == GAME_PLAYING)
     {
-        return 1;
+        snake_set_direction(&game->snake,
+                            direction);
+    }
+}
+
+
+void game_update(Game *game)
+{
+    if (game->state != GAME_PLAYING)
+    {
+        return;
     }
 
-    return 0;
+    game->tick_count++;
+
+    if (game->tick_count < game->speed_ticks)
+    {
+        return;
+    }
+
+    game->tick_count = 0;
+
+    snake_move(&game->snake);
+
+    if (wall_collision(&game->snake))
+    {
+        game->state = GAME_OVER;
+        return;
+    }
+
+    if (snake_check_self_collision(&game->snake))
+    {
+        game->state = GAME_OVER;
+        return;
+    }
+
+    if (food_is_eaten(&game->food,
+                      &game->snake))
+    {
+        snake_grow(&game->snake);
+
+        game->score++;
+
+        if (game->score > game->high_score)
+        {
+            game->high_score = game->score;
+        }
+
+        if (game->snake.length >=
+            BOARD_WIDTH * BOARD_HEIGHT)
+        {
+            game->state = GAME_WIN;
+            return;
+        }
+
+        food_spawn(&game->food,
+                   &game->snake);
+    }
+}
+
+
+int game_is_over(const Game *game)
+{
+    return (game->state == GAME_OVER ||
+            game->state == GAME_WIN);
 }

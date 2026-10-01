@@ -3,18 +3,16 @@
 
 #include "game.h"
 
-void display_start_screen(void);
+void display_init(void);
 
-void display_draw(
-    const Game *game
-);
+void display_clear(uint16_t color);
 
-void display_pause_screen(
-    const Game *game
-);
+void display_draw_board(const Game *game);
 
-void display_game_over(
-    const Game *game
-);
+void display_draw_score(const Game *game);
 
-#endif 
+void display_draw_state(const Game *game);
+
+void display_update(const Game *game);
+
+#endif

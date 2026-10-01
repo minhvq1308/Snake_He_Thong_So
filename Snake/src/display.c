@@ -1,22 +1,6 @@
 #include "display.h"
 #include "config.h"
 
-/*
- * ============================================================
- * TFT ST7735 MMIO
- * ============================================================
- */
-
-#define TFT_DATA    (*(volatile unsigned int *)0x10000010)
-#define TFT_CMD     (*(volatile unsigned int *)0x10000014)
-#define TFT_STATUS  (*(volatile unsigned int *)0x10000018)
-
-
-/*
- * ============================================================
- * Chờ TFT sẵn sàng
- * ============================================================
- */
 
 static void tft_wait_ready(void)
 {
@@ -26,13 +10,7 @@ static void tft_wait_ready(void)
 }
 
 
-/*
- * ============================================================
- * Gửi command
- * ============================================================
- */
-
-static void tft_write_cmd(unsigned char cmd)
+static void tft_cmd(uint8_t cmd)
 {
     tft_wait_ready();
 
@@ -40,13 +18,7 @@ static void tft_write_cmd(unsigned char cmd)
 }
 
 
-/*
- * ============================================================
- * Gửi data
- * ============================================================
- */
-
-static void tft_write_data(unsigned char data)
+static void tft_data(uint8_t data)
 {
     tft_wait_ready();
 
@@ -54,327 +26,250 @@ static void tft_write_data(unsigned char data)
 }
 
 
-/*
- * ============================================================
- * Gửi màu RGB565
- * ============================================================
- */
-
-static void tft_write_color(unsigned int color)
+static void tft_set_window(uint8_t x0,
+                           uint8_t y0,
+                           uint8_t x1,
+                           uint8_t y1)
 {
-    tft_write_data((unsigned char)(color >> 8));
-    tft_write_data((unsigned char)(color & 0xFF));
+    tft_cmd(0x2A);
+
+    tft_data(0x00);
+    tft_data(x0);
+
+    tft_data(0x00);
+    tft_data(x1);
+
+
+    tft_cmd(0x2B);
+
+    tft_data(0x00);
+    tft_data(y0);
+
+    tft_data(0x00);
+    tft_data(y1);
+
+
+    tft_cmd(0x2C);
 }
 
 
-/*
- * ============================================================
- * Thiết lập vùng vẽ
- *
- * CASET = 0x2A
- * RASET = 0x2B
- * RAMWR = 0x2C
- * ============================================================
- */
-
-static void tft_set_addr_window(
-    unsigned int x0,
-    unsigned int y0,
-    unsigned int x1,
-    unsigned int y1
-)
+static void tft_write_color(uint16_t color)
 {
-    /*
-     * Column Address Set
-     */
-
-    tft_write_cmd(0x2A);
-
-    tft_write_data((unsigned char)(x0 >> 8));
-    tft_write_data((unsigned char)(x0 & 0xFF));
-
-    tft_write_data((unsigned char)(x1 >> 8));
-    tft_write_data((unsigned char)(x1 & 0xFF));
-
-
-    /*
-     * Row Address Set
-     */
-
-    tft_write_cmd(0x2B);
-
-    tft_write_data((unsigned char)(y0 >> 8));
-    tft_write_data((unsigned char)(y0 & 0xFF));
-
-    tft_write_data((unsigned char)(y1 >> 8));
-    tft_write_data((unsigned char)(y1 & 0xFF));
-
-
-    /*
-     * Memory Write
-     *
-     * Sau lệnh này ST7735 sẽ nhận liên tục
-     * các byte pixel.
-     */
-
-    tft_write_cmd(0x2C);
+    tft_data((uint8_t)(color >> 8));
+    tft_data((uint8_t)(color & 0xFF));
 }
 
 
-/*
- * ============================================================
- * Kiểm tra một cell có phải Snake hay không
- * ============================================================
- */
-
-static int cell_is_snake(
-    const Game *game,
-    int x,
-    int y
-)
+static void tft_fill_rect(uint8_t x,
+                          uint8_t y,
+                          uint8_t width,
+                          uint8_t height,
+                          uint16_t color)
 {
-    int i;
+    uint16_t i;
+    uint16_t count;
 
-    for (i = 0; i < game->snake.length; i++)
+    tft_set_window(
+        x,
+        y,
+        x + width - 1,
+        y + height - 1
+    );
+
+    count = (uint16_t)width * height;
+
+    for (i = 0; i < count; i++)
     {
-        if (game->snake.body[i].x == x &&
-            game->snake.body[i].y == y)
-        {
-            return i;
-        }
+        tft_write_color(color);
     }
-
-    return -1;
 }
 
 
-/*
- * ============================================================
- * Vẽ toàn bộ board
- *
- * Mỗi cell = 4 x 4 pixel.
- *
- * Toàn bộ board được gửi trong MỘT vùng RAMWR.
- *
- * CS sẽ được giữ LOW bởi st7735.v trong suốt
- * quá trình truyền pixel.
- * ============================================================
- */
-
-static void display_draw_board(
-    const Game *game
-)
+void display_init(void)
 {
-    int cell_y;
-    int cell_x;
-    int pixel_y;
-    int pixel_x;
-
     /*
-     * Vùng board:
-     *
-     * X = BOARD_X -> BOARD_X + 119
-     * Y = BOARD_Y -> BOARD_Y + 59
+     * ST7735 initialization is performed
+     * by tft_st7735.v.
      */
 
-    tft_set_addr_window(
+    tft_wait_ready();
+}
+
+
+void display_clear(uint16_t color)
+{
+    tft_fill_rect(
+        0,
+        0,
+        TFT_WIDTH,
+        TFT_HEIGHT,
+        color
+    );
+}
+
+
+void display_draw_board(const Game *game)
+{
+    uint8_t x;
+    uint8_t y;
+    uint16_t color;
+
+    /*
+     * Clear board area.
+     */
+
+    tft_fill_rect(
         BOARD_X,
         BOARD_Y,
-        BOARD_X + BOARD_PIXEL_WIDTH - 1,
-        BOARD_Y + BOARD_PIXEL_HEIGHT - 1
+        BOARD_PIXEL_WIDTH,
+        BOARD_PIXEL_HEIGHT,
+        COLOR_BLACK
     );
 
 
     /*
-     * Duyệt từng cell.
+     * Draw food.
      */
 
-    for (cell_y = 0;
-         cell_y < BOARD_HEIGHT;
-         cell_y++)
+    tft_fill_rect(
+        BOARD_X +
+        game->food.x * CELL_SIZE,
+
+        BOARD_Y +
+        game->food.y * CELL_SIZE,
+
+        CELL_SIZE,
+        CELL_SIZE,
+
+        COLOR_RED
+    );
+
+
+    /*
+     * Draw snake.
+     */
+
+    for (uint16_t i = 0;
+         i < game->snake.length;
+         i++)
     {
-        for (cell_x = 0;
-             cell_x < BOARD_WIDTH;
-             cell_x++)
+        if (i == 0)
         {
-            unsigned int color;
-            int snake_index;
+            color = COLOR_GREEN;
+        }
+        else
+        {
+            color = COLOR_CYAN;
+        }
 
-            snake_index =
-                cell_is_snake(
-                    game,
-                    cell_x,
-                    cell_y
-                );
+        x = game->snake.body[i].x;
+        y = game->snake.body[i].y;
 
-
-            /*
-             * Food
-             */
-
-            if (game->food.x == cell_x &&
-                game->food.y == cell_y)
-            {
-                color = COLOR_RED;
-            }
-
-            /*
-             * Snake head
-             */
-
-            else if (snake_index == 0)
-            {
-                color = COLOR_HEAD;
-            }
-
-            /*
-             * Snake body
-             */
-
-            else if (snake_index > 0)
-            {
-                color = COLOR_GREEN;
-            }
-
-            /*
-             * Empty
-             */
-
-            else
-            {
-                color = COLOR_BLACK;
-            }
+        tft_fill_rect(
+            BOARD_X + x * CELL_SIZE,
+            BOARD_Y + y * CELL_SIZE,
+            CELL_SIZE,
+            CELL_SIZE,
+            color
+        );
+    }
+}
 
 
-            /*
-             * Vẽ 4 x 4 pixel cho cell.
-             */
+void display_draw_score(const Game *game)
+{
+    /*
+     * Simple score indicator.
+     *
+     * Number of small blocks represents score.
+     */
 
-            for (pixel_y = 0;
-                 pixel_y < CELL_SIZE;
-                 pixel_y++)
-            {
-                for (pixel_x = 0;
-                     pixel_x < CELL_SIZE;
-                     pixel_x++)
-                {
-                    tft_write_color(color);
-                }
-            }
+    uint32_t score;
+    uint32_t i;
+
+    score = game->score;
+
+    if (score > 20)
+    {
+        score = 20;
+    }
+
+    for (i = 0; i < 20; i++)
+    {
+        if (i < score)
+        {
+            tft_fill_rect(
+                4 + i * 6,
+                10,
+                4,
+                6,
+                COLOR_YELLOW
+            );
+        }
+        else
+        {
+            tft_fill_rect(
+                4 + i * 6,
+                10,
+                4,
+                6,
+                COLOR_BLACK
+            );
         }
     }
 }
 
 
-/*
- * ============================================================
- * Vẽ viền board
- * ============================================================
- */
-
-static void display_draw_border(void)
+void display_draw_state(const Game *game)
 {
-    int i;
-
-    /*
-     * Viền trên
-     */
-
-    tft_set_addr_window(
-        BOARD_X,
-        BOARD_Y,
-        BOARD_X + BOARD_PIXEL_WIDTH - 1,
-        BOARD_Y
-    );
-
-    for (i = 0; i < BOARD_PIXEL_WIDTH; i++)
+    if (game->state == GAME_PAUSED)
     {
-        tft_write_color(COLOR_WHITE);
+        tft_fill_rect(
+            52,
+            25,
+            24,
+            8,
+            COLOR_YELLOW
+        );
     }
-
-
-    /*
-     * Viền dưới
-     */
-
-    tft_set_addr_window(
-        BOARD_X,
-        BOARD_Y + BOARD_PIXEL_HEIGHT - 1,
-        BOARD_X + BOARD_PIXEL_WIDTH - 1,
-        BOARD_Y + BOARD_PIXEL_HEIGHT - 1
-    );
-
-    for (i = 0; i < BOARD_PIXEL_WIDTH; i++)
+    else if (game->state == GAME_OVER)
     {
-        tft_write_color(COLOR_WHITE);
+        tft_fill_rect(
+            40,
+            25,
+            48,
+            8,
+            COLOR_RED
+        );
+    }
+    else if (game->state == GAME_WIN)
+    {
+        tft_fill_rect(
+            40,
+            25,
+            48,
+            8,
+            COLOR_GREEN
+        );
+    }
+    else
+    {
+        tft_fill_rect(
+            40,
+            25,
+            48,
+            8,
+            COLOR_BLACK
+        );
     }
 }
 
 
-/*
- * ============================================================
- * Display Start
- * ============================================================
- */
-
-void display_start_screen(void)
-{
-    /*
-     * Màn hình khởi đầu sẽ được vẽ bởi display_draw()
-     * khi Game đã được khởi tạo.
-     */
-}
-
-
-/*
- * ============================================================
- * Display Game
- * ============================================================
- */
-
-void display_draw(
-    const Game *game
-)
+void display_update(const Game *game)
 {
     display_draw_board(game);
-    display_draw_border();
-}
 
+    display_draw_score(game);
 
-/*
- * ============================================================
- * Pause
- * ============================================================
- */
-
-void display_pause_screen(
-    const Game *game
-)
-{
-    /*
-     * Vẫn giữ nguyên board.
-     *
-     * Việc pause được xử lý trong main.c.
-     */
-
-    display_draw(game);
-}
-
-
-/*
- * ============================================================
- * Game Over
- * ============================================================
- */
-
-void display_game_over(
-    const Game *game
-)
-{
-    /*
-     * Giữ lại board để người chơi nhìn thấy
-     * trạng thái cuối cùng.
-     */
-
-    display_draw(game);
+    display_draw_state(game);
 }

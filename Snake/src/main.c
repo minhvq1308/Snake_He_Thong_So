@@ -1,307 +1,389 @@
-#include "game.h"
-#include "input.h"
-#include "display.h"
+#include "stm32f10x.h"
+#include "stm32f10x_rcc.h"
+#include "stm32f10x_gpio.h"
+#include "stm32f10x_usart.h"
+#include "stm32f10x_i2c.h"
+
+#define DS3231_ADDR 0x68
 
 
-/*
- * ============================================================
- * CPU clock
- *
- * Tang Nano SoC hiện tại:
- * 27 MHz
- * ============================================================
- */
+/* =========================================================
+ * UART1
+ * PA9  -> TX
+ * PA10 -> RX
+ * 9600 baud
+ * ========================================================= */
 
-#define CPU_FREQ_HZ 27000000u
-
-
-/*
- * ============================================================
- * Đọc cycle counter của RISC-V
- * ============================================================
- */
-
-static unsigned int read_cycle(void)
+void USART1_Init(void)
 {
-    unsigned int value;
+    GPIO_InitTypeDef GPIO_InitStructure;
+    USART_InitTypeDef USART_InitStructure;
 
-    __asm__ volatile (
-        "rdcycle %0"
-        : "=r"(value)
+    RCC_APB2PeriphClockCmd(
+        RCC_APB2Periph_GPIOA |
+        RCC_APB2Periph_USART1,
+        ENABLE
     );
 
-    return value;
+    /* PA9 - TX */
+    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_9;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(GPIOA, &GPIO_InitStructure);
+
+    /* PA10 - RX */
+    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
+    GPIO_Init(GPIOA, &GPIO_InitStructure);
+
+    USART_InitStructure.USART_BaudRate = 9600;
+    USART_InitStructure.USART_WordLength = USART_WordLength_8b;
+    USART_InitStructure.USART_StopBits = USART_StopBits_1;
+    USART_InitStructure.USART_Parity = USART_Parity_No;
+    USART_InitStructure.USART_HardwareFlowControl =
+        USART_HardwareFlowControl_None;
+    USART_InitStructure.USART_Mode =
+        USART_Mode_Tx | USART_Mode_Rx;
+
+    USART_Init(USART1, &USART_InitStructure);
+
+    USART_Cmd(USART1, ENABLE);
 }
 
 
-/*
- * ============================================================
- * Delay milliseconds
- *
- * Dùng RISC-V cycle counter.
- * ============================================================
- */
-
-static void delay_ms(unsigned int ms)
+void UART_SendChar(char c)
 {
-    unsigned int start;
-    unsigned int cycles;
+    while (USART_GetFlagStatus(
+        USART1,
+        USART_FLAG_TXE
+    ) == RESET);
 
-    start = read_cycle();
+    USART_SendData(USART1, c);
+}
 
-    cycles =
-        (CPU_FREQ_HZ / 1000u) * ms;
 
-    while ((unsigned int)(read_cycle() - start) < cycles)
+void UART_SendString(char *str)
+{
+    while (*str)
     {
+        UART_SendChar(*str);
+        str++;
     }
 }
 
 
-/*
- * ============================================================
- * Kiểm tra phím điều khiển
- * ============================================================
- */
+/* =========================================================
+ * I2C1
+ *
+ * PB6 -> SCL
+ * PB7 -> SDA
+ * 100 kHz
+ * ========================================================= */
 
-static int is_direction_key(char key)
+void I2C1_Init(void)
 {
-    if (key == 'w' || key == 'W')
-        return 1;
+    GPIO_InitTypeDef GPIO_InitStructure;
+    I2C_InitTypeDef I2C_InitStructure;
 
-    if (key == 'a' || key == 'A')
-        return 1;
+    RCC_APB2PeriphClockCmd(
+        RCC_APB2Periph_GPIOB,
+        ENABLE
+    );
 
-    if (key == 's' || key == 'S')
-        return 1;
+    RCC_APB1PeriphClockCmd(
+        RCC_APB1Periph_I2C1,
+        ENABLE
+    );
 
-    if (key == 'd' || key == 'D')
-        return 1;
+    GPIO_InitStructure.GPIO_Pin =
+        GPIO_Pin_6 | GPIO_Pin_7;
 
-    return 0;
+    GPIO_InitStructure.GPIO_Mode =
+        GPIO_Mode_AF_OD;
+
+    GPIO_InitStructure.GPIO_Speed =
+        GPIO_Speed_50MHz;
+
+    GPIO_Init(GPIOB, &GPIO_InitStructure);
+
+    I2C_InitStructure.I2C_ClockSpeed = 100000;
+
+    I2C_InitStructure.I2C_Mode =
+        I2C_Mode_I2C;
+
+    I2C_InitStructure.I2C_DutyCycle =
+        I2C_DutyCycle_2;
+
+    I2C_InitStructure.I2C_OwnAddress1 =
+        0x00;
+
+    I2C_InitStructure.I2C_Ack =
+        I2C_Ack_Enable;
+
+    I2C_InitStructure.I2C_AcknowledgedAddress =
+        I2C_AcknowledgedAddress_7bit;
+
+    I2C_Init(I2C1, &I2C_InitStructure);
+
+    I2C_Cmd(I2C1, ENABLE);
 }
 
 
-/*
- * ============================================================
+/* =========================================================
+ * I2C đọc nhiều byte
+ * ========================================================= */
+
+void I2C_ReadMultiReg(
+    uint8_t devAddr,
+    uint8_t regAddr,
+    uint8_t *pBuffer,
+    uint16_t length
+)
+{
+    /* START */
+    I2C_GenerateSTART(I2C1, ENABLE);
+
+    while (!I2C_CheckEvent(
+        I2C1,
+        I2C_EVENT_MASTER_MODE_SELECT
+    ));
+
+    /* Device address + WRITE */
+    I2C_Send7bitAddress(
+        I2C1,
+        devAddr << 1,
+        I2C_Direction_Transmitter
+    );
+
+    while (!I2C_CheckEvent(
+        I2C1,
+        I2C_EVENT_MASTER_TRANSMITTER_MODE_SELECTED
+    ));
+
+    /* Register address */
+    I2C_SendData(I2C1, regAddr);
+
+    while (!I2C_CheckEvent(
+        I2C1,
+        I2C_EVENT_MASTER_BYTE_TRANSMITTED
+    ));
+
+    /* REPEATED START */
+    I2C_GenerateSTART(I2C1, ENABLE);
+
+    while (!I2C_CheckEvent(
+        I2C1,
+        I2C_EVENT_MASTER_MODE_SELECT
+    ));
+
+    /* Device address + READ */
+    I2C_Send7bitAddress(
+        I2C1,
+        devAddr << 1,
+        I2C_Direction_Receiver
+    );
+
+    while (!I2C_CheckEvent(
+        I2C1,
+        I2C_EVENT_MASTER_RECEIVER_MODE_SELECTED
+    ));
+
+    /* Đọc dữ liệu */
+    while (length)
+    {
+        if (length == 1)
+        {
+            I2C_AcknowledgeConfig(
+                I2C1,
+                DISABLE
+            );
+
+            I2C_GenerateSTOP(
+                I2C1,
+                ENABLE
+            );
+        }
+
+        while (!I2C_CheckEvent(
+            I2C1,
+            I2C_EVENT_MASTER_BYTE_RECEIVED
+        ));
+
+        *pBuffer = I2C_ReceiveData(I2C1);
+
+        pBuffer++;
+        length--;
+    }
+
+    /* Bật ACK lại */
+    I2C_AcknowledgeConfig(
+        I2C1,
+        ENABLE
+    );
+}
+
+
+/* =========================================================
+ * BCD -> Decimal
+ * ========================================================= */
+
+uint8_t BCD_To_Decimal(uint8_t bcd)
+{
+    return ((bcd >> 4) * 10) + (bcd & 0x0F);
+}
+
+
+/* =========================================================
+ * Đọc thời gian DS3231
+ *
+ * 0x00 - Second
+ * 0x01 - Minute
+ * 0x02 - Hour
+ * 0x03 - Day
+ * 0x04 - Date
+ * 0x05 - Month
+ * 0x06 - Year
+ * ========================================================= */
+
+void DS3231_ReadTime(
+    uint8_t *second,
+    uint8_t *minute,
+    uint8_t *hour,
+    uint8_t *day,
+    uint8_t *date,
+    uint8_t *month,
+    uint8_t *year
+)
+{
+    uint8_t data[7];
+
+    I2C_ReadMultiReg(
+        DS3231_ADDR,
+        0x00,
+        data,
+        7
+    );
+
+    *second = BCD_To_Decimal(
+        data[0] & 0x7F
+    );
+
+    *minute = BCD_To_Decimal(
+        data[1] & 0x7F
+    );
+
+    *hour = BCD_To_Decimal(
+        data[2] & 0x3F
+    );
+
+    *day = data[3];
+
+    *date = BCD_To_Decimal(
+        data[4] & 0x3F
+    );
+
+    *month = BCD_To_Decimal(
+        data[5] & 0x1F
+    );
+
+    *year = BCD_To_Decimal(
+        data[6]
+    );
+}
+
+
+/* =========================================================
+ * Delay
+ * ========================================================= */
+
+void Delay_ms(volatile uint32_t ms)
+{
+    while (ms--)
+    {
+        volatile uint32_t i;
+
+        for (i = 0; i < 7200; i++)
+        {
+            __asm volatile ("nop");
+        }
+    }
+}
+
+
+/* =========================================================
+ * In số 2 chữ số
+ * ========================================================= */
+
+void PrintNumber(uint8_t number)
+{
+    UART_SendChar(
+        (number / 10) + '0'
+    );
+
+    UART_SendChar(
+        (number % 10) + '0'
+    );
+}
+
+
+/* =========================================================
  * MAIN
- * ============================================================
- */
+ * ========================================================= */
 
 int main(void)
 {
-    Game game;
+    uint8_t second;
+    uint8_t minute;
+    uint8_t hour;
+    uint8_t day;
+    uint8_t date;
+    uint8_t month;
+    uint8_t year;
 
+    SystemInit();
 
-    /*
-     * --------------------------------------------------------
-     * Khởi tạo input
-     * --------------------------------------------------------
-     */
+    USART1_Init();
+    I2C1_Init();
 
-    input_init();
-
-
-    /*
-     * --------------------------------------------------------
-     * Khởi tạo game
-     * --------------------------------------------------------
-     */
-
-    game_init(&game);
-
-    game_set_difficulty(
-        &game,
-        NORMAL
-    );
-
-    game.state = GAME_PLAYING;
-
-
-    /*
-     * --------------------------------------------------------
-     * Vẽ game lần đầu
-     * --------------------------------------------------------
-     */
-
-    display_draw(&game);
-
-
-    /*
-     * --------------------------------------------------------
-     * GAME LOOP
-     * --------------------------------------------------------
-     */
+    UART_SendString("\r\n");
+    UART_SendString("STM32F103 + DS3231\r\n");
+    UART_SendString("====================\r\n");
 
     while (1)
     {
-        char key;
+        DS3231_ReadTime(
+            &second,
+            &minute,
+            &hour,
+            &day,
+            &date,
+            &month,
+            &year
+        );
 
+        UART_SendString("Time: ");
 
-        /*
-         * Đọc UART.
-         *
-         * Nếu không có dữ liệu:
-         * input_get() trả về '\0'.
-         */
+        PrintNumber(hour);
+        UART_SendChar(':');
 
-        key = input_get();
+        PrintNumber(minute);
+        UART_SendChar(':');
 
+        PrintNumber(second);
 
-        /*
-         * ====================================================
-         * GAME PLAYING
-         * ====================================================
-         */
+        UART_SendString("  ");
 
-        if (game.state == GAME_PLAYING)
-        {
-            /*
-             * W/A/S/D:
-             * đổi hướng Snake.
-             */
+        PrintNumber(date);
+        UART_SendChar('/');
 
-            if (is_direction_key(key))
-            {
-                Direction direction;
+        PrintNumber(month);
 
-                direction =
-                    input_to_direction(key);
+        UART_SendString("/20");
 
-                snake_set_direction(
-                    &game.snake,
-                    direction
-                );
-            }
+        PrintNumber(year);
 
+        UART_SendString("\r\n");
 
-            /*
-             * P:
-             * Pause.
-             */
-
-            if (key == 'p' || key == 'P')
-            {
-                game_toggle_pause(&game);
-
-                display_pause_screen(&game);
-
-                continue;
-            }
-
-
-            /*
-             * Chờ theo difficulty.
-             */
-
-            delay_ms(
-                (unsigned int)game.speed_ms
-            );
-
-
-            /*
-             * Update Snake.
-             */
-
-            game_update(&game);
-
-
-            /*
-             * Vẽ lại màn hình.
-             */
-
-            display_draw(&game);
-
-
-            /*
-             * Nếu Game Over thì vòng sau
-             * sẽ xử lý trạng thái đó.
-             */
-        }
-
-
-        /*
-         * ====================================================
-         * GAME PAUSED
-         * ====================================================
-         */
-
-        else if (game.state == GAME_PAUSED)
-        {
-            /*
-             * P:
-             * tiếp tục game.
-             */
-
-            if (key == 'p' || key == 'P')
-            {
-                game_toggle_pause(&game);
-
-                display_draw(&game);
-            }
-
-            /*
-             * R:
-             * restart.
-             */
-
-            else if (key == 'r' || key == 'R')
-            {
-                game_restart(&game);
-
-                display_draw(&game);
-            }
-
-            /*
-             * Không cần chạy game.
-             */
-
-            delay_ms(20);
-        }
-
-
-        /*
-         * ====================================================
-         * GAME OVER
-         * ====================================================
-         */
-
-        else if (game.state == GAME_OVER)
-        {
-            /*
-             * R:
-             * chơi lại.
-             */
-
-            if (key == 'r' || key == 'R')
-            {
-                game_restart(&game);
-
-                display_draw(&game);
-            }
-
-            /*
-             * Không cho Snake tiếp tục chạy.
-             */
-
-            delay_ms(20);
-        }
-
-
-        /*
-         * ====================================================
-         * GAME START
-         * ====================================================
-         */
-
-        else
-        {
-            game.state = GAME_PLAYING;
-
-            display_draw(&game);
-        }
+        Delay_ms(1000);
     }
-
-
-    return 0;
 }
